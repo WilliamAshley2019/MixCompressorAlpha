@@ -133,4 +133,5 @@ and everyone making coding easier.
 
  This is an alpha project lightly tested you can report any bugs, contributoins and advances to the code are welcome as the goal here is to make good plugins for making music. 
 
- Must edit " discontinuities in the gain reduction envelope or from the compressor reacting too abruptly needs envelope smoothing and peak detection."
+ 
+I THINK IT IS WORKING, let me know if it isn't. :)
