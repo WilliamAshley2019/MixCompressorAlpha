@@ -2,7 +2,7 @@ Mix Compressor Alpha![License: MIT](https://img.shields.io/badge/License-MIT-yel
 ![JUCE](https://img.shields.io/badge/JUCE-8-blue)
 ![VST3](https://img.shields.io/badge/VST3-Steinberg-red)
 
-A JUCE-based audio plugin inspired by Mike Senior's compression techniques from his seminal article "Compression Made Easy".
+A JUCE-based audio plugin inspired by Mike Senior's compression techniques (not endorsed reviewed or sanctioned by Mike Senior) from his seminal article "Compression Made Easy".
 This is a very introductory alpha plugin that has a specific design goal in purpose. Likely needs a bit of work. (a lot of work  :)
 
 
