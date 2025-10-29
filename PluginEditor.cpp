@@ -119,11 +119,11 @@ void MixCompressorAudioProcessorEditor::paint(juce::Graphics& g)
 
     // Title
     g.setColour(juce::Colours::white);
-    g.setFont(juce::Font(24.0f, juce::Font::bold));
+    g.setFont(juce::FontOptions(24.0f, juce::Font::bold));
     g.drawText("MIX COMPRESSOR", 20, 10, 300, 30, juce::Justification::left);
 
     // Subtitle
-    g.setFont(juce::Font(12.0f));
+    g.setFont(juce::FontOptions(12.0f));
     g.setColour(juce::Colours::grey);
     g.drawText("Based on Mike Senior's Mixing Principles", 20, 35, 300, 20, juce::Justification::left);
 
@@ -135,13 +135,13 @@ void MixCompressorAudioProcessorEditor::paint(juce::Graphics& g)
 
     // Section labels
     g.setColour(accentColour);
-    g.setFont(juce::Font(14.0f, juce::Font::bold));
+    g.setFont(juce::FontOptions(14.0f, juce::Font::bold));
     g.drawText("STAGE 1 - LEVELER", 25, 75, 200, 20, juce::Justification::left);
     g.drawText("STAGE 2 - PEAK CATCHER", 25, 265, 200, 20, juce::Justification::left);
 
     // Info text
     g.setColour(juce::Colours::lightgrey);
-    g.setFont(juce::Font(10.0f));
+    g.setFont(juce::FontOptions(10.0f));
     g.drawText("Use Stage 1 for smooth leveling | Stage 2 for peak control",
         25, 240, 400, 15, juce::Justification::left);
 }
@@ -223,7 +223,7 @@ void MixCompressorAudioProcessorEditor::setupLabel(juce::Label& label, const juc
     label.setText(text, juce::dontSendNotification);
     label.setJustificationType(juce::Justification::centred);
     label.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    label.setFont(juce::Font(11.0f, juce::Font::bold));
+    label.setFont(juce::FontOptions(11.0f, juce::Font::bold));
     addAndMakeVisible(label);
 }
 
@@ -238,7 +238,7 @@ void MixCompressorAudioProcessorEditor::GainReductionMeter::paint(juce::Graphics
 
     // Label
     g.setColour(juce::Colours::white);
-    g.setFont(juce::Font(11.0f, juce::Font::bold));
+    g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
     g.drawText("GAIN REDUCTION", bounds.removeFromLeft(120), juce::Justification::centredLeft);
 
     // Meter area
@@ -246,14 +246,14 @@ void MixCompressorAudioProcessorEditor::GainReductionMeter::paint(juce::Graphics
 
     // Scale markings
     g.setColour(juce::Colours::grey);
-    g.setFont(juce::Font(9.0f));
+    g.setFont(juce::FontOptions(9.0f));
     for (int db = 0; db >= -18; db -= 3)
     {
         float x = juce::jmap(static_cast<float>(db), -18.0f, 0.0f,
             meterBounds.getX(), meterBounds.getRight());
         g.drawLine(x, meterBounds.getY(), x, meterBounds.getBottom(), 1.0f);
-        g.drawText(juce::String(db), x - 10, meterBounds.getBottom() - 12, 20, 12,
-            juce::Justification::centred);
+        g.drawText(juce::String(db), static_cast<int>(x - 10), static_cast<int>(meterBounds.getBottom() - 12),
+            20, 12, juce::Justification::centred);
     }
 
     // Gain reduction bar
@@ -278,7 +278,7 @@ void MixCompressorAudioProcessorEditor::GainReductionMeter::paint(juce::Graphics
 
         // Value text
         g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(13.0f, juce::Font::bold));
+        g.setFont(juce::FontOptions(13.0f, juce::Font::bold));
         g.drawText(juce::String(gainReduction, 1) + " dB",
             meterBounds.withWidth(100).translated(meterBounds.getWidth() - 100, -15),
             juce::Justification::centredRight);

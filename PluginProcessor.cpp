@@ -15,6 +15,7 @@ MixCompressorAudioProcessor::MixCompressorAudioProcessor()
 #endif
     apvts(*this, nullptr, "Parameters", createParameterLayout())
 {
+    makeupGainSmoothed.reset(44100.0, 0.05); // 50ms smoothing for makeup gain
 }
 
 MixCompressorAudioProcessor::~MixCompressorAudioProcessor()
@@ -116,8 +117,18 @@ void MixCompressorAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
     stage1.prepare(sampleRate);
     stage2.prepare(sampleRate);
 
+    makeupGainSmoothed.reset(sampleRate, 0.05);
+    makeupGainSmoothed.setCurrentAndTargetValue(1.0f);
+
     inputRMS = 0.0f;
     outputRMS = 0.0f;
+
+    // Reset DC blocker
+    for (int i = 0; i < 2; ++i)
+    {
+        dcBlockerX1[i] = 0.0f;
+        dcBlockerY1[i] = 0.0f;
+    }
 }
 
 void MixCompressorAudioProcessor::releaseResources()
@@ -158,22 +169,41 @@ void MixCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
 
-    // Get parameters
-    auto threshold1 = apvts.getRawParameterValue("threshold1")->load();
-    auto ratio1 = apvts.getRawParameterValue("ratio1")->load();
-    auto attack1 = apvts.getRawParameterValue("attack1")->load();
-    auto release1 = apvts.getRawParameterValue("release1")->load();
-    auto knee = apvts.getRawParameterValue("knee")->load();
+    // Get parameters safely
+    auto* threshold1Param = apvts.getRawParameterValue("threshold1");
+    auto* ratio1Param = apvts.getRawParameterValue("ratio1");
+    auto* attack1Param = apvts.getRawParameterValue("attack1");
+    auto* release1Param = apvts.getRawParameterValue("release1");
+    auto* kneeParam = apvts.getRawParameterValue("knee");
+    auto* dualStageParam = apvts.getRawParameterValue("dualStage");
+    auto* threshold2Param = apvts.getRawParameterValue("threshold2");
+    auto* ratio2Param = apvts.getRawParameterValue("ratio2");
+    auto* attack2Param = apvts.getRawParameterValue("attack2");
+    auto* release2Param = apvts.getRawParameterValue("release2");
+    auto* makeupParam = apvts.getRawParameterValue("makeup");
+    auto* autoMakeupParam = apvts.getRawParameterValue("autoMakeup");
+    auto* mixParam = apvts.getRawParameterValue("mix");
 
-    auto dualStage = apvts.getRawParameterValue("dualStage")->load() > 0.5f;
-    auto threshold2 = apvts.getRawParameterValue("threshold2")->load();
-    auto ratio2 = apvts.getRawParameterValue("ratio2")->load();
-    auto attack2 = apvts.getRawParameterValue("attack2")->load();
-    auto release2 = apvts.getRawParameterValue("release2")->load();
+    if (!threshold1Param || !ratio1Param || !attack1Param || !release1Param || !kneeParam ||
+        !dualStageParam || !threshold2Param || !ratio2Param || !attack2Param || !release2Param ||
+        !makeupParam || !autoMakeupParam || !mixParam)
+        return;
 
-    auto makeupDB = apvts.getRawParameterValue("makeup")->load();
-    auto autoMakeup = apvts.getRawParameterValue("autoMakeup")->load() > 0.5f;
-    auto mixPercent = apvts.getRawParameterValue("mix")->load();
+    auto threshold1 = threshold1Param->load();
+    auto ratio1 = ratio1Param->load();
+    auto attack1 = attack1Param->load();
+    auto release1 = release1Param->load();
+    auto knee = kneeParam->load();
+
+    auto dualStage = dualStageParam->load() > 0.5f;
+    auto threshold2 = threshold2Param->load();
+    auto ratio2 = ratio2Param->load();
+    auto attack2 = attack2Param->load();
+    auto release2 = release2Param->load();
+
+    auto makeupDB = makeupParam->load();
+    auto autoMakeup = autoMakeupParam->load() > 0.5f;
+    auto mixPercent = mixParam->load();
 
     // Set compressor parameters
     stage1.setParameters(threshold1, ratio1, attack1, release1, knee);
@@ -187,7 +217,7 @@ void MixCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     float sumInputSq = 0.0f;
     float sumOutputSq = 0.0f;
 
-    // Process audio
+    // Process audio sample-by-sample for smooth gain changes
     for (int channel = 0; channel < totalNumInputChannels; ++channel)
     {
         auto* channelData = buffer.getWritePointer(channel);
@@ -195,6 +225,13 @@ void MixCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         for (int i = 0; i < buffer.getNumSamples(); ++i)
         {
             float input = channelData[i];
+
+            // DC blocker to prevent offset issues
+            float dcBlocked = input - dcBlockerX1[channel] + dcBlockerCoef * dcBlockerY1[channel];
+            dcBlockerX1[channel] = input;
+            dcBlockerY1[channel] = dcBlocked;
+            input = dcBlocked;
+
             sumInputSq += input * input;
 
             // Stage 1: Leveler
@@ -216,22 +253,27 @@ void MixCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     // Update RMS values
     int numSamples = buffer.getNumSamples() * totalNumInputChannels;
-    float instantInputRMS = std::sqrt(sumInputSq / numSamples);
-    float instantOutputRMS = std::sqrt(sumOutputSq / numSamples);
+    if (numSamples > 0)
+    {
+        float instantInputRMS = std::sqrt(sumInputSq / numSamples);
+        float instantOutputRMS = std::sqrt(sumOutputSq / numSamples);
 
-    inputRMS = rmsAlpha * inputRMS + (1.0f - rmsAlpha) * instantInputRMS;
-    outputRMS = rmsAlpha * outputRMS + (1.0f - rmsAlpha) * instantOutputRMS;
+        inputRMS = rmsAlpha * inputRMS + (1.0f - rmsAlpha) * instantInputRMS;
+        outputRMS = rmsAlpha * outputRMS + (1.0f - rmsAlpha) * instantOutputRMS;
+    }
 
-    // Apply makeup gain
-    float makeupGain = juce::Decibels::decibelsToGain(makeupDB);
+    // Calculate and smooth makeup gain
+    float targetMakeupGain = juce::Decibels::decibelsToGain(makeupDB);
 
     if (autoMakeup && maxGR > 0.01f)
     {
         float autoMakeupDB = calculateAutoMakeup(maxGR);
-        makeupGain = juce::Decibels::decibelsToGain(autoMakeupDB);
+        targetMakeupGain = juce::Decibels::decibelsToGain(autoMakeupDB);
     }
 
-    // Apply mix (parallel compression)
+    makeupGainSmoothed.setTargetValue(targetMakeupGain);
+
+    // Apply mix (parallel compression) with smoothed makeup gain
     float wetMix = mixPercent / 100.0f;
     float dryMix = 1.0f - wetMix;
 
@@ -242,9 +284,13 @@ void MixCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
         for (int i = 0; i < buffer.getNumSamples(); ++i)
         {
+            float makeupGain = makeupGainSmoothed.getNextValue();
             float wet = wetData[i] * makeupGain;
             float dry = dryData[i];
             wetData[i] = wet * wetMix + dry * dryMix;
+
+            // Soft clip to prevent any possible overshoot
+            wetData[i] = std::tanh(wetData[i] * 0.9f) / 0.9f;
         }
     }
 
@@ -256,7 +302,7 @@ void MixCompressorAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 float MixCompressorAudioProcessor::calculateAutoMakeup(float avgGainReduction)
 {
     // Compensate for average gain reduction with slight headroom
-    return avgGainReduction * 0.8f;
+    return avgGainReduction * 0.75f;
 }
 
 //==============================================================================
@@ -266,65 +312,83 @@ void MixCompressorAudioProcessor::loadPreset(PresetMode preset)
     if (presetParam)
         *presetParam = static_cast<int>(preset);
 
+    auto* threshold1Param = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("threshold1"));
+    auto* ratio1Param = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("ratio1"));
+    auto* attack1Param = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("attack1"));
+    auto* release1Param = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("release1"));
+    auto* dualStageParam = dynamic_cast<juce::AudioParameterBool*>(apvts.getParameter("dualStage"));
+    auto* threshold2Param = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("threshold2"));
+    auto* ratio2Param = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("ratio2"));
+    auto* attack2Param = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("attack2"));
+    auto* release2Param = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("release2"));
+    auto* autoMakeupParam = dynamic_cast<juce::AudioParameterBool*>(apvts.getParameter("autoMakeup"));
+    auto* mixParam = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("mix"));
+    auto* kneeParam = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("knee"));
+
+    if (!threshold1Param || !ratio1Param || !attack1Param || !release1Param || !dualStageParam ||
+        !threshold2Param || !ratio2Param || !attack2Param || !release2Param || !autoMakeupParam ||
+        !mixParam || !kneeParam)
+        return;
+
     switch (preset)
     {
     case PresetMode::VocalLeveler:
-        *apvts.getRawParameterValue("threshold1") = -18.0f;
-        *apvts.getRawParameterValue("ratio1") = 2.5f;
-        *apvts.getRawParameterValue("attack1") = 15.0f;
-        *apvts.getRawParameterValue("release1") = 150.0f;
-        *apvts.getRawParameterValue("dualStage") = 0.0f;
-        *apvts.getRawParameterValue("autoMakeup") = 1.0f;
-        *apvts.getRawParameterValue("mix") = 100.0f;
-        *apvts.getRawParameterValue("knee") = 6.0f;
+        *threshold1Param = -18.0f;
+        *ratio1Param = 2.5f;
+        *attack1Param = 15.0f;
+        *release1Param = 150.0f;
+        *dualStageParam = false;
+        *autoMakeupParam = true;
+        *mixParam = 100.0f;
+        *kneeParam = 6.0f;
         break;
 
     case PresetMode::DrumPunch:
-        *apvts.getRawParameterValue("threshold1") = -15.0f;
-        *apvts.getRawParameterValue("ratio1") = 4.0f;
-        *apvts.getRawParameterValue("attack1") = 25.0f;
-        *apvts.getRawParameterValue("release1") = 100.0f;
-        *apvts.getRawParameterValue("dualStage") = 0.0f;
-        *apvts.getRawParameterValue("autoMakeup") = 1.0f;
-        *apvts.getRawParameterValue("mix") = 100.0f;
-        *apvts.getRawParameterValue("knee") = 3.0f;
+        *threshold1Param = -15.0f;
+        *ratio1Param = 4.0f;
+        *attack1Param = 25.0f;
+        *release1Param = 100.0f;
+        *dualStageParam = false;
+        *autoMakeupParam = true;
+        *mixParam = 100.0f;
+        *kneeParam = 3.0f;
         break;
 
     case PresetMode::BassControl:
-        *apvts.getRawParameterValue("threshold1") = -20.0f;
-        *apvts.getRawParameterValue("ratio1") = 4.0f;
-        *apvts.getRawParameterValue("attack1") = 5.0f;
-        *apvts.getRawParameterValue("release1") = 200.0f;
-        *apvts.getRawParameterValue("dualStage") = 0.0f;
-        *apvts.getRawParameterValue("autoMakeup") = 1.0f;
-        *apvts.getRawParameterValue("mix") = 100.0f;
-        *apvts.getRawParameterValue("knee") = 4.0f;
+        *threshold1Param = -20.0f;
+        *ratio1Param = 4.0f;
+        *attack1Param = 5.0f;
+        *release1Param = 200.0f;
+        *dualStageParam = false;
+        *autoMakeupParam = true;
+        *mixParam = 100.0f;
+        *kneeParam = 4.0f;
         break;
 
     case PresetMode::MixBusGlue:
-        *apvts.getRawParameterValue("threshold1") = -10.0f;
-        *apvts.getRawParameterValue("ratio1") = 2.0f;
-        *apvts.getRawParameterValue("attack1") = 30.0f;
-        *apvts.getRawParameterValue("release1") = 300.0f;
-        *apvts.getRawParameterValue("dualStage") = 0.0f;
-        *apvts.getRawParameterValue("autoMakeup") = 1.0f;
-        *apvts.getRawParameterValue("mix") = 100.0f;
-        *apvts.getRawParameterValue("knee") = 3.0f;
+        *threshold1Param = -10.0f;
+        *ratio1Param = 2.0f;
+        *attack1Param = 30.0f;
+        *release1Param = 300.0f;
+        *dualStageParam = false;
+        *autoMakeupParam = true;
+        *mixParam = 100.0f;
+        *kneeParam = 3.0f;
         break;
 
     case PresetMode::ParallelComp:
-        *apvts.getRawParameterValue("threshold1") = -25.0f;
-        *apvts.getRawParameterValue("ratio1") = 6.0f;
-        *apvts.getRawParameterValue("attack1") = 10.0f;
-        *apvts.getRawParameterValue("release1") = 120.0f;
-        *apvts.getRawParameterValue("dualStage") = 1.0f;
-        *apvts.getRawParameterValue("threshold2") = -10.0f;
-        *apvts.getRawParameterValue("ratio2") = 10.0f;
-        *apvts.getRawParameterValue("attack2") = 2.0f;
-        *apvts.getRawParameterValue("release2") = 50.0f;
-        *apvts.getRawParameterValue("autoMakeup") = 1.0f;
-        *apvts.getRawParameterValue("mix") = 30.0f;
-        *apvts.getRawParameterValue("knee") = 6.0f;
+        *threshold1Param = -25.0f;
+        *ratio1Param = 6.0f;
+        *attack1Param = 10.0f;
+        *release1Param = 120.0f;
+        *dualStageParam = true;
+        *threshold2Param = -10.0f;
+        *ratio2Param = 10.0f;
+        *attack2Param = 2.0f;
+        *release2Param = 50.0f;
+        *autoMakeupParam = true;
+        *mixParam = 30.0f;
+        *kneeParam = 6.0f;
         break;
 
     default:
@@ -333,7 +397,7 @@ void MixCompressorAudioProcessor::loadPreset(PresetMode preset)
 }
 
 //==============================================================================
-// Compressor Stage Implementation
+// Compressor Stage Implementation with improved smoothing
 void MixCompressorAudioProcessor::CompressorStage::prepare(double sr)
 {
     sampleRate = sr;
@@ -343,35 +407,50 @@ void MixCompressorAudioProcessor::CompressorStage::prepare(double sr)
 void MixCompressorAudioProcessor::CompressorStage::setParameters(float threshold, float r, float attack, float release, float knee)
 {
     thresholdDB = threshold;
-    ratio = r;
+    ratio = juce::jmax(1.0f, r); // Ensure ratio is at least 1:1
     kneeWidth = knee;
 
-    // Convert attack/release times to coefficients
-    attackCoef = 1.0f - std::exp(-1.0f / (attack * 0.001f * static_cast<float>(sampleRate)));
-    releaseCoef = 1.0f - std::exp(-1.0f / (release * 0.001f * static_cast<float>(sampleRate)));
+    // Convert attack/release times to coefficients with minimum values to prevent instability
+    float attackMs = juce::jmax(0.1f, attack);
+    float releaseMs = juce::jmax(20.0f, release);
+
+    attackCoef = 1.0f - std::exp(-1.0f / (attackMs * 0.001f * static_cast<float>(sampleRate)));
+    releaseCoef = 1.0f - std::exp(-1.0f / (releaseMs * 0.001f * static_cast<float>(sampleRate)));
+
+    // Clamp coefficients to safe range
+    attackCoef = juce::jlimit(0.0001f, 0.9999f, attackCoef);
+    releaseCoef = juce::jlimit(0.0001f, 0.9999f, releaseCoef);
 }
 
 float MixCompressorAudioProcessor::CompressorStage::processSample(float input, float& grOut)
 {
+    // Use absolute value for peak detection
     float inputAbs = std::fabs(input);
 
-    // Envelope follower
-    if (inputAbs > envelopeFollower)
-        envelopeFollower += (inputAbs - envelopeFollower) * attackCoef;
+    // Peak envelope follower with proper ballistics
+    if (inputAbs > peakEnvelope)
+        peakEnvelope += (inputAbs - peakEnvelope) * attackCoef;
     else
-        envelopeFollower += (inputAbs - envelopeFollower) * releaseCoef;
+        peakEnvelope += (inputAbs - peakEnvelope) * releaseCoef;
 
-    // Convert to dB
-    float envDB = juce::Decibels::gainToDecibels(envelopeFollower + 0.0001f);
+    // Clamp envelope to prevent extreme values
+    peakEnvelope = juce::jlimit(0.0f, 10.0f, peakEnvelope);
+
+    // Convert to dB with safe floor
+    float envDB = juce::Decibels::gainToDecibels(peakEnvelope + 1e-6f);
 
     // Apply compression curve
     float gainReductionDB = applyCompressionCurve(envDB);
     grOut = gainReductionDB;
 
     // Convert back to linear gain
-    float gain = juce::Decibels::decibelsToGain(-gainReductionDB);
+    float targetGain = juce::Decibels::decibelsToGain(-gainReductionDB);
 
-    return input * gain;
+    // Smooth the gain changes to prevent clicks
+    gainSmooth += (targetGain - gainSmooth) * gainSmoothingCoef;
+    gainSmooth = juce::jlimit(0.01f, 1.0f, gainSmooth);
+
+    return input * gainSmooth;
 }
 
 float MixCompressorAudioProcessor::CompressorStage::applyCompressionCurve(float inputDB)
@@ -386,20 +465,23 @@ float MixCompressorAudioProcessor::CompressorStage::applyCompressionCurve(float 
     else if (overThreshold >= kneeWidth * 0.5f)
     {
         // Above knee - full compression
-        return overThreshold * (1.0f - 1.0f / ratio);
+        float grDB = overThreshold * (1.0f - 1.0f / ratio);
+        return juce::jlimit(0.0f, 60.0f, grDB); // Clamp to reasonable range
     }
     else
     {
-        // In knee - soft transition
+        // In knee - soft transition using quadratic curve
         float kneeInput = overThreshold + kneeWidth * 0.5f;
         float kneeFactor = (kneeInput * kneeInput) / (2.0f * kneeWidth);
-        return kneeFactor * (1.0f - 1.0f / ratio);
+        float grDB = kneeFactor * (1.0f - 1.0f / ratio);
+        return juce::jlimit(0.0f, 60.0f, grDB);
     }
 }
 
 void MixCompressorAudioProcessor::CompressorStage::reset()
 {
-    envelopeFollower = 0.0f;
+    peakEnvelope = 0.0f;
+    gainSmooth = 1.0f;
 }
 
 //==============================================================================

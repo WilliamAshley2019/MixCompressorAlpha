@@ -64,7 +64,7 @@ public:
 
 private:
     //==============================================================================
-    // Compressor engine - single stage
+    // Compressor engine - single stage with proper smoothing
     class CompressorStage
     {
     public:
@@ -74,13 +74,19 @@ private:
         void reset();
 
     private:
-        float envelopeFollower = 0.0f;
+        // Peak detection with proper ballistics
+        float peakEnvelope = 0.0f;
+        float gainSmooth = 1.0f;
+
         float attackCoef = 0.0f;
         float releaseCoef = 0.0f;
         float thresholdDB = -24.0f;
         float ratio = 4.0f;
         float kneeWidth = 6.0f;
         double sampleRate = 44100.0;
+
+        // Gain smoothing to prevent clicks
+        static constexpr float gainSmoothingCoef = 0.9999f;
 
         float applyCompressionCurve(float inputDB);
     };
@@ -89,20 +95,26 @@ private:
     juce::AudioProcessorValueTreeState apvts;
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
-    // Dual-stage compression
+    // Dual-stage compression with independent smoothing
     CompressorStage stage1; // Leveler
     CompressorStage stage2; // Peak catcher
 
     // Metering
     std::atomic<float> currentGainReduction{ 0.0f };
 
-    // Auto makeup gain calculation
+    // Auto makeup gain calculation with smoothing
     float calculateAutoMakeup(float avgGainReduction);
+    juce::SmoothedValue<float> makeupGainSmoothed;
 
     // RMS calculation for level matching
     float inputRMS = 0.0f;
     float outputRMS = 0.0f;
     static constexpr float rmsAlpha = 0.99f;
+
+    // DC blocker to prevent offset issues
+    float dcBlockerX1[2] = { 0.0f, 0.0f };
+    float dcBlockerY1[2] = { 0.0f, 0.0f };
+    static constexpr float dcBlockerCoef = 0.995f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MixCompressorAudioProcessor)
 };
