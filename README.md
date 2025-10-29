@@ -3,7 +3,7 @@ Mix Compressor Alpha![License: MIT](https://img.shields.io/badge/License-MIT-yel
 ![VST3](https://img.shields.io/badge/VST3-Steinberg-red)
 
 A JUCE-based audio plugin inspired by Mike Senior's compression techniques from his seminal article "Compression Made Easy".
-
+This is a very introductory alpha plugin that has a specific design goal in purpose. Likely needs a bit of work. (a lot of work  :)
 
 
 This VST3 plugin implements a dual-stage compressor designed for professional mixing workflows, emphasizing dynamic stability, transient shaping, and level-matched comparisons.
