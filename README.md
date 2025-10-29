@@ -103,11 +103,11 @@ Expert View Toggle: Reveals sidechain EQ, knee viz, and topology coloration.
 Installation & BuildingPrerequisitesJUCE 8 (free/open-source framework for audio plugins).
 Steinberg VST 3 SDK (for VST3 format compatibility).
 Projucer (included with JUCE) for project management.
-A C++ compiler (e.g., Xcode on macOS, Visual Studio on Windows, or GCC/Clang on Linux).
+A C++ compiler 
 
 This project focused on making a VST3 plugin for Windows, only tested on windows 11.
 
-Install the built .vst3 file to your DAW's plugin folder (e.g., ~/Library/Audio/Plug-Ins/VST3 on macOS).
+Install the built .vst3 file to your DAW's plugin folder intended for windows 11 use.
 
 Prep: Mult tracks if needed; EQ for tonal balance first.
 Set & Listen: Load a preset, adjust threshold/ratio for 3–6 dB GR. Watch the meter—aim for groove-sync, not pumping.
